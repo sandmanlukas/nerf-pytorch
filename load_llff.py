@@ -1,6 +1,8 @@
+import glob
 import numpy as np
 import os
 import imageio as iio
+import pandas as pd
 from PIL import Image
 from torchvision import transforms as T
 
@@ -66,9 +68,15 @@ def _minify(basedir, factors=[], resolutions=[]):
 def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
     
     poses_arr = np.load(os.path.join(basedir, 'poses_bounds.npy'))
-    poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
+
+    # OPENCV camera model, hwf = [H, W, fx, fy]
+    if poses_arr.shape[-1] == 22:
+        poses = poses_arr[:, :-2].reshape([-1, 4, 5]).transpose([1,2,0])
+    # Camera model with fx=fy, hwf = [H, W, focal]
+    else:
+        poses = poses_arr[:,:-2].reshape([-1,3,5]).transpose([1,2,0])
     bds = poses_arr[:, -2:].transpose([1,0])
-    
+
     img0 = [os.path.join(basedir, 'images', f) for f in sorted(os.listdir(os.path.join(basedir, 'images'))) \
             if f.endswith('JPG') or f.endswith('jpg') or f.endswith('png')][0]
     sh = iio.imread(img0).shape
@@ -103,8 +111,15 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
         return
     
     sh = iio.imread(imgfiles[0]).shape
+    # set height and width
     poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
-    poses[2, 4, :] = poses[2, 4, :] * 1./factor
+    # OPENCV model, hwf = [H, W, fx, fy]
+    # Scale both fx and fy
+    if poses_arr.shape[-1] == 22:
+        poses[2:4, 4, :] = poses[2:4, 4, :] * 1./factor
+    # only scale fx, since fx=fy
+    else:
+        poses[2,4,:] = poses[2,4,:] * 1./factor
     
     if not load_imgs:
         return poses, bds
@@ -118,6 +133,7 @@ def _load_data(basedir, factor=None, width=None, height=None, load_imgs=True):
     imgs = imgs = [imread(f)[...,:3]/255. for f in imgfiles]
     imgs = np.stack(imgs, -1)  
     
+
     print('Loaded image data', imgs.shape, poses[:,-1,0])
     return poses, bds, imgs
 
@@ -242,13 +258,34 @@ def spherify_poses(poses, bds):
     poses_reset = np.concatenate([poses_reset[:,:3,:4], np.broadcast_to(poses[0,:3,-1:], poses_reset[:,:3,-1:].shape)], -1)
     
     return poses_reset, new_poses, bds
-    
 
-def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False, test=False, render_spiral=False, maskdir=''):
+    
+def _load_tsv(basedir, exp_name):
+    if not os.path.exists(os.path.join(basedir, 'tsvs')):
+        raise Exception(f'{basedir}/tsvs does not exist. Try creating it.')
+    
+    tsv_files = glob.glob(os.path.join(basedir,'tsvs', "*.tsv"))
+    # finds tsv file with same name as experiment name
+    dataset_tsv = os.path.join(basedir,'tsvs', f"{exp_name}.tsv")
+    if not dataset_tsv in tsv_files:
+        raise Exception(f'{dataset_tsv} does not exists.')
+
+    files = pd.read_csv(dataset_tsv, sep="\t")
+    files = files[~files["id"].isnull()]  # remove data without id
+    files = files.sort_values(by=['filename'])
+    files.reset_index(inplace=True, drop=True)
+
+
+    return files
+
+
+def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=False, path_zflat=False, test=False, render_spiral=False, maskdir='', exp_name=''):
     
 
     poses, bds, imgs = _load_data(basedir, factor=factor) # factor=8 downsamples original imgs by 8x
     print('Loaded', basedir, bds.min(), bds.max())
+
+    files = _load_tsv(basedir, exp_name)
     
     # Correct rotation matrix ordering and move variable dim to axis 0
     poses = np.concatenate([poses[:, 1:2, :], -poses[:, 0:1, :], poses[:, 2:, :]], 1)
@@ -335,15 +372,17 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
 
     if test:
         i_test = []
+        i_val = []
     else:
-        i_test = np.argmin(dists)
+        i_test = files[files['split'] == 'test'].index.values.tolist()
+        i_val = files[files['split'] == 'val'].index.values.tolist()
     print('HOLDOUT view is', i_test)
     
     images = images.astype(np.float32)
     poses = poses.astype(np.float32)
 
     ## Return poses as render_poses
-    return images,mask, poses, bds, poses, i_test
+    return images,mask, poses, bds, poses, i_test, i_val
 
 
 
