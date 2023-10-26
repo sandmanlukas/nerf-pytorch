@@ -832,11 +832,6 @@ def train():
             hwf = poses[0, :3, -1]
         poses = poses[:, :3, :4]
 
-        """
-        array([[[ 9.9801016e-01,  5.6327268e-02,  2.8338468e-02,  3.1170600e+04,
-          3.6000000e+02],
-        """
-
         mask_exists = len(mask) != 0
 
         if args.testdir:
@@ -1181,9 +1176,6 @@ def train():
         ################################
 
         dt = time.time() - time0
-        # print(f"Step: {global_step}, Loss: {loss}, Time: {dt}")
-        #####           end            #####
-
         # Rest is logging
         if i % args.i_weights == 0:
             path = os.path.join(basedir, expname, "{:06d}.tar".format(i))
@@ -1222,13 +1214,6 @@ def train():
             )
             print(f"Saved {moviebase}rgb.mp4 and {moviebase}disp.mp4.")
 
-            # if args.use_viewdirs:
-            #     render_kwargs_test['c2w_staticcam'] = render_poses[0][:3,:4]
-            #     with torch.no_grad():
-            #         rgbs_still, _ = render_path(render_poses, hwf, args.chunk, render_kwargs_test)
-            #     render_kwargs_test['c2w_staticcam'] = None
-            #     imageio.mimwrite(moviebase + 'rgb_still.mp4', to8b(rgbs_still), fps=30, quality=8)
-
         if i_test and i % args.i_testset == 0 and i > 0:
             testsavedir = os.path.join(basedir, expname, "testset_{:06d}".format(i))
             os.makedirs(testsavedir, exist_ok=True)
@@ -1246,7 +1231,10 @@ def train():
             print("Saved test set")
 
         if i % args.i_print == 0:
-            tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
+            if args.N_importance > 0:
+                tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_0: {psnr0.item()}")
+            else:
+                tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
         """
             print(expname, i, psnr.numpy(), loss.numpy(), global_step.numpy())
             print('iter time {:.05f}'.format(dt))

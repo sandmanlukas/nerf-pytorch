@@ -292,7 +292,7 @@ def load_llff_data(basedir, factor=8, recenter=True, bd_factor=.75, spherify=Fal
     poses = np.moveaxis(poses, -1, 0).astype(np.float32)
     imgs = np.moveaxis(imgs, -1, 0).astype(np.float32)
 
-    # Mask here
+    # Mask ground truth images since rendered images are masked as well.
     mask = []
     if maskdir:
         mask = Image.open(maskdir).convert('L')
