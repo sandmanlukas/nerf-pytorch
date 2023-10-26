@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import lpips
 
 
+from torch.utils.tensorboard import SummaryWriter
 from skimage.metrics import structural_similarity as ssim
 from tqdm import tqdm, trange
 
@@ -1064,7 +1065,7 @@ def train():
     print("VAL views are", i_val)
 
     # Summary writers
-    # writer = SummaryWriter(os.path.join(basedir, 'summaries', expname))
+    writer = SummaryWriter(os.path.join(basedir, 'summaries', expname))
 
     start = start + 1
     for i in trange(start, N_iters):
@@ -1235,17 +1236,13 @@ def train():
                 tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_0: {psnr0.item()}")
             else:
                 tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
-        """
-            print(expname, i, psnr.numpy(), loss.numpy(), global_step.numpy())
-            print('iter time {:.05f}'.format(dt))
+            
+            writer.add_scalar('loss',loss.item(),i)
+            writer.add_scalar('psnr',psnr.item(),i)
+            writer.add_scalar('trans',psnr0.item(),i)
 
-            with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_print):
-                tf.contrib.summary.scalar('loss', loss)
-                tf.contrib.summary.scalar('psnr', psnr)
-                tf.contrib.summary.histogram('tran', trans)
-                if args.N_importance > 0:
-                    tf.contrib.summary.scalar('psnr0', psnr0)
-
+            if args.N_importance > 0:
+                writer.add_scalar('psnr_0',loss.item(),i)
 
             if i%args.i_img==0:
 
@@ -1253,29 +1250,22 @@ def train():
                 img_i=np.random.choice(i_val)
                 target = images[img_i]
                 pose = poses[img_i, :3,:4]
+
                 with torch.no_grad():
-                    rgb, disp, acc, extras = render(H, W, focal, chunk=args.chunk, c2w=pose,
+                    rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, c2w=pose,
                                                         **render_kwargs_test)
 
-                psnr = mse2psnr(img2mse(rgb, target))
-
-                with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_img):
-
-                    tf.contrib.summary.image('rgb', to8b(rgb)[tf.newaxis])
-                    tf.contrib.summary.image('disp', disp[tf.newaxis,...,tf.newaxis])
-                    tf.contrib.summary.image('acc', acc[tf.newaxis,...,tf.newaxis])
-
-                    tf.contrib.summary.scalar('psnr_holdout', psnr)
-                    tf.contrib.summary.image('rgb_holdout', target[tf.newaxis])
-
-
+                psnr_val = mse2psnr(img2mse(rgb, target))
+                
+                writer.add_image('rgb', to8b(rgb), i)
+                writer.add_image('disp', to8b(disp), i)
+                writer.add_image('acc', to8b(acc), i)
+                writer.add_scalar('psnr val', psnr_val)
+   
                 if args.N_importance > 0:
-
-                    with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_img):
-                        tf.contrib.summary.image('rgb0', to8b(extras['rgb0'])[tf.newaxis])
-                        tf.contrib.summary.image('disp0', extras['disp0'][tf.newaxis,...,tf.newaxis])
-                        tf.contrib.summary.image('z_std', extras['z_std'][tf.newaxis,...,tf.newaxis])
-        """
+                    writer.add_image('rgb0', to8b(extras['rgb0']), i)
+                    writer.add_image('disp0', to8b(extras['disp0']), i)
+                    writer.add_image('z_std', to8b(extras['z_std']), i)
 
         global_step += 1
 
