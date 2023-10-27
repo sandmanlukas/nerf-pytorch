@@ -1268,7 +1268,9 @@ def train():
                 pose = poses[img_i, :3, :4]
 
                 with torch.no_grad():
-                    rgb, disp, acc, extras = render(
+                    # disp, acc doesn't seem to be working correctly
+                    # disregard them
+                    rgb, _, _, extras = render(
                         H, W, K, chunk=args.chunk, c2w=pose, **render_kwargs_test
                     )
 
@@ -1310,19 +1312,19 @@ def train():
                     if args.N_importance > 0:
                         psnr0_val = mse2psnr(img2mse(extras["rgb0"], target))
 
-                stack = torch.stack([disp[None,:], acc[None, :]])
-                writer.add_images("val/fine/disp_acc", stack, i)
+                # stack = torch.stack([disp[None,:], acc[None, :]])
+                # writer.add_images("val/fine/disp_acc", stack, i)
                 writer.add_scalar("val/psnr", psnr_val.item(), i)
 
                 if args.N_importance > 0:
-                    stack = torch.stack(
-                        [
-                            extras["disp0"][None, :],
-                            extras["acc0"][None, :],
-                            extras["z_std"][None, :],
-                        ]
-                    )
-                    writer.add_images("val/coarse/disp_acc_z_std", stack, i)
+                    # stack = torch.stack(
+                    #     [
+                    #         extras["disp0"][None, :],
+                    #         extras["acc0"][None, :],
+                    #         extras["z_std"][None, :],
+                    #     ]
+                    # )
+                    writer.add_image("val/z_std", extras["z_std"][None,:], i)
                     writer.add_scalar("val/psnr_coarse", psnr0_val.item(), i)
 
         global_step += 1
