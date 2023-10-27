@@ -1,8 +1,7 @@
-import os, sys
+import os
 import numpy as np
 import imageio.v3
 import json
-import random
 import time
 import torch
 import torch.nn as nn
@@ -171,14 +170,13 @@ def render_path(
     render_factor=0,
     mask=[],
 ):
-
     H, W, fx, fy = hwf
     if render_factor != 0:
         # Render downsampled for speed
         H = H // render_factor
         W = W // render_factor
-        fx = fx / render_factor 
-        fy = fy / render_factor 
+        fx = fx / render_factor
+        fy = fy / render_factor
 
     rgbs = []
     disps = []
@@ -1065,7 +1063,20 @@ def train():
     print("VAL views are", i_val)
 
     # Summary writers
-    writer = SummaryWriter(os.path.join(basedir, 'summaries', expname))
+
+    # get last version number and increment
+    version_num = "0"
+    if os.path.isdir(os.path.join(basedir, expname, "summaries")):
+        version_list = sorted(
+            [
+                int(item.split("_")[-1])
+                for item in os.listdir(os.path.join(basedir, expname, "summaries"))
+                if os.path.isdir(os.path.join(basedir, expname, "summaries", item))
+            ]
+        )
+        version_num = str(version_list[-1] + 1) if version_list else "0"
+
+    writer = SummaryWriter(os.path.join(basedir, expname, "summaries",f"{expname}_{version_num}"))
 
     start = start + 1
     for i in trange(start, N_iters):
@@ -1233,41 +1244,89 @@ def train():
 
         if i % args.i_print == 0:
             if args.N_importance > 0:
-                tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_0: {psnr0.item()}")
+                tqdm.write(
+                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_0: {psnr0.item()}"
+                )
             else:
-                tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
-            
-            writer.add_scalar('loss',loss.item(),i)
-            writer.add_scalar('psnr',psnr.item(),i)
-            writer.add_scalar('trans',psnr0.item(),i)
+                tqdm.write(
+                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}"
+                )
+
+            writer.add_scalar("train/loss", loss.item(), i)
+            writer.add_scalar("train/psnr", psnr.item(), i)
+
+            # histogram of raw predictions from model
+            # writer.add_histogram("train/trans", trans, i)
 
             if args.N_importance > 0:
-                writer.add_scalar('psnr_0',loss.item(),i)
+                writer.add_scalar("train/psnr_coarse", psnr0.item(), i)
 
-            if i%args.i_img==0:
-
+            if i % args.i_img == 0:
                 # Log a rendered validation view to Tensorboard
-                img_i=np.random.choice(i_val)
+                img_i = np.random.choice(i_val)
                 target = images[img_i]
-                pose = poses[img_i, :3,:4]
+                pose = poses[img_i, :3, :4]
 
                 with torch.no_grad():
-                    rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, c2w=pose,
-                                                        **render_kwargs_test)
+                    rgb, disp, acc, extras = render(
+                        H, W, K, chunk=args.chunk, c2w=pose, **render_kwargs_test
+                    )
 
-                psnr_val = mse2psnr(img2mse(rgb, target))
-                
-                writer.add_image('rgb', to8b(rgb), i)
-                writer.add_image('disp', to8b(disp), i)
-                writer.add_image('acc', to8b(acc), i)
-                writer.add_scalar('psnr val', psnr_val)
-   
+                if mask_exists:
+                    rgb_masked = rgb * torch.tensor(mask[0])
+                    psnr_val = mse2psnr(img2mse(rgb_masked, target))
+
+                    # Add stack of gt, masked rendered image, rendered image
+                    stack = torch.stack(
+                        [
+                            target.permute(2, 0, 1),
+                            rgb_masked.permute(2, 0, 1),
+                            rgb.permute(2, 0, 1),
+                        ]
+                    )  # (3,3,H,W)
+
+                    writer.add_images("val/gt_rgb(masked)_rgb", stack, i)
+                    if args.N_importance > 0:
+                        rgb0_masked = extras["rgb0"] * torch.tensor(mask[0])
+                        psnr0_val = mse2psnr(img2mse(rgb0_masked, target))
+
+                        # Add stack of fine network rendered image
+                        stack = torch.stack(
+                            [
+                                rgb0_masked.permute(2, 0, 1),
+                                extras["rgb0"].permute(2, 0, 1),
+                            ]
+                        )
+                        writer.add_images("val/rgb_coarse(masked)_rgb_coarse", stack, i)
+                else:
+                    psnr_val = mse2psnr(img2mse(rgb, target))
+
+                    # Add stack of gt, rendered image
+                    stack = torch.stack(
+                        [target.permute(2, 0, 1), rgb.permute(2, 0, 1)]
+                    )  # (2,3,H,W)
+                    writer.add_images("val/gt_rgb", stack, i)
+
+                    if args.N_importance > 0:
+                        psnr0_val = mse2psnr(img2mse(extras["rgb0"], target))
+
+                stack = torch.stack([disp[None,:], acc[None, :]])
+                writer.add_images("val/fine/disp_acc", stack, i)
+                writer.add_scalar("val/psnr", psnr_val.item(), i)
+
                 if args.N_importance > 0:
-                    writer.add_image('rgb0', to8b(extras['rgb0']), i)
-                    writer.add_image('disp0', to8b(extras['disp0']), i)
-                    writer.add_image('z_std', to8b(extras['z_std']), i)
+                    stack = torch.stack(
+                        [
+                            extras["disp0"][None, :],
+                            extras["acc0"][None, :],
+                            extras["z_std"][None, :],
+                        ]
+                    )
+                    writer.add_images("val/coarse/disp_acc_z_std", stack, i)
+                    writer.add_scalar("val/psnr_coarse", psnr0_val.item(), i)
 
         global_step += 1
+    writer.close()
 
 
 if __name__ == "__main__":
