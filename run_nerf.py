@@ -1245,7 +1245,7 @@ def train():
         if i % args.i_print == 0:
             if args.N_importance > 0:
                 tqdm.write(
-                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_0: {psnr0.item()}"
+                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_COARSE: {psnr0.item()}"
                 )
             else:
                 tqdm.write(
