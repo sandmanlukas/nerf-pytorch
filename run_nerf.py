@@ -1065,18 +1065,20 @@ def train():
     # Summary writers
 
     # get last version number and increment
+
+    # TODO: Will this work if summaries dir does not exist?
     version_num = "0"
-    if os.path.isdir(os.path.join(basedir, expname)):
+    if os.path.isdir(os.path.join(basedir, expname, 'summaries')):
         version_list = sorted(
             [
                 int(item.split("_")[-1])
-                for item in os.listdir(os.path.join(basedir, expname))
-                if os.path.isdir(os.path.join(basedir, expname, item))
+                for item in os.listdir(os.path.join(basedir, expname, 'summaries'))
+                if os.path.isdir(os.path.join(basedir,expname, 'summaries',item))
             ]
         )
         version_num = str(version_list[-1] + 1) if version_list else "0"
 
-    log_dir = os.path.join(basedir, expname, f"{expname}_{version_num}")
+    log_dir = os.path.join(basedir, expname,'summaries', f"{expname}_{version_num}")
     writer = SummaryWriter(log_dir)
     print(f"Saving logs to {log_dir}")
 
