@@ -182,6 +182,7 @@ def render_path(
     disps = []
 
     psnrs_scores = []
+    psnrs_unmasked_scores = []
     ssims_scores = []
     lpips_scores = []
 
@@ -210,6 +211,11 @@ def render_path(
             rgb_img = rgb_masked if len(mask) else rgb.cpu().numpy()
 
             p = -10.0 * np.log10(np.mean(np.square(rgb_img - gt_img)))
+            if len(mask) != 0:
+                # remove mask from psnr calculation
+                valid_mask = np.repeat(mask[0] != 0, 3, axis=2)
+                psnr_unmasked = np.square(rgb_img - gt_img)[valid_mask]
+                psnr_unmasked = -10.0 * np.log10(np.mean(psnr_unmasked))
             ssim_score = ssim(rgb_img, gt_img, channel_axis=2, data_range=1.0)
 
             # LPIPS require images in -1 to 1 range.
@@ -224,14 +230,25 @@ def render_path(
             ssims_scores.append(ssim_score)
             psnrs_scores.append(p)
             lpips_scores.append(lpips_score.item())
+
             print("PSNR: ", p)
             print("SSIM: ", ssim_score)
             print("LPIPS: ", lpips_score.item())
+
+            if len(mask) != 0:
+                psnrs_unmasked_scores.append(psnr_unmasked)
+                print("PSNR UNMASKED: ", psnr_unmasked)
 
         if savedir is not None:
             rgb8 = to8b(rgbs[-1])
             filename = os.path.join(savedir, "{:03d}.png".format(i))
             imageio.v3.imwrite(filename, rgb8)
+
+    if psnrs_unmasked_scores:
+        psnr_unmasked_score = round(float(np.mean(psnrs_unmasked_scores)), 2)
+        psnr_unmasked_median = round(float(np.median(psnrs_unmasked_scores)), 2)
+        psnr_unmasked_max = round(float(np.max(psnrs_unmasked_scores)), 2)
+        psnr_unmasked_min = round(float(np.min(psnrs_unmasked_scores)), 2)
 
     if psnrs_scores and ssims_scores and lpips_scores:
         psnr_score = round(float(np.mean(psnrs_scores)), 2)
@@ -259,6 +276,10 @@ def render_path(
                 "median_psnr": psnr_median,
                 "psnr_max": psnr_max,
                 "psnr_min": psnr_min,
+                "psnr_unmasked_mean": psnr_unmasked_score if psnrs_unmasked_scores else "-",
+                "median_psnr_unmasked": psnr_unmasked_median if psnrs_unmasked_scores else "-",
+                "psnr_unmasked_max": psnr_unmasked_max if psnrs_unmasked_scores else "-",
+                "psnr_unmasked_min": psnr_unmasked_min if psnrs_unmasked_scores else "-",
                 "ssim_mean": mean_ssim,
                 "median_ssim": median_ssim,
                 "ssim_max": max_ssim,
@@ -1068,17 +1089,17 @@ def train():
 
     # TODO: Will this work if summaries dir does not exist?
     version_num = "0"
-    if os.path.isdir(os.path.join(basedir, expname, 'summaries')):
+    if os.path.isdir(os.path.join(basedir, expname, "summaries")):
         version_list = sorted(
             [
                 int(item.split("_")[-1])
-                for item in os.listdir(os.path.join(basedir, expname, 'summaries'))
-                if os.path.isdir(os.path.join(basedir,expname, 'summaries',item))
+                for item in os.listdir(os.path.join(basedir, expname, "summaries"))
+                if os.path.isdir(os.path.join(basedir, expname, "summaries", item))
             ]
         )
         version_num = str(version_list[-1] + 1) if version_list else "0"
 
-    log_dir = os.path.join(basedir, expname,'summaries', f"{expname}_{version_num}")
+    log_dir = os.path.join(basedir, expname, "summaries", f"{expname}_{version_num}")
     writer = SummaryWriter(log_dir)
     print(f"Saving logs to {log_dir}")
 
@@ -1166,6 +1187,7 @@ def train():
 
         optimizer.zero_grad()
         img_loss = img2mse(rgb, target_s)
+
         trans = extras["raw"][..., -1]
         loss = img_loss
         psnr = mse2psnr(img_loss)
@@ -1179,6 +1201,17 @@ def train():
             loss = loss + img_loss0
             psnr0 = mse2psnr(img_loss0)
 
+        if mask_exists:
+            img_loss_unmasked = img2mse(rgb, target_s, batch_mask != 0)
+            psnr_unmasked = mse2psnr(img_loss_unmasked)
+
+            if "rgb0" in extras:
+                img_loss0_unmasked = (
+                    img2mse(extras["rgb0"] * batch_mask, target_s, batch_mask != 0)
+                    if mask_exists
+                    else img2mse(extras["rgb0"], target_s, batch_mask != 0)
+                )
+                psnr0_unmasked = mse2psnr(img_loss0_unmasked)
         loss.backward()
         optimizer.step()
 
@@ -1249,21 +1282,29 @@ def train():
         if i % args.i_print == 0:
             if args.N_importance > 0:
                 tqdm.write(
-                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_COARSE: {psnr0.item()}"
+                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_COARSE: {psnr0.item()} " + 
+                      f"PSNR_UNMASKED: {psnr_unmasked.item() if mask_exists else '-'} PSNR_COARSE_UNMASKED: {psnr0_unmasked.item() if mask_exists else '-'}"
                 )
             else:
                 tqdm.write(
-                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}"
+                    f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()} PSNR_UNMASKED: {psnr_unmasked.item() if mask_exists else '-'}"
                 )
 
             writer.add_scalar("train/loss", loss.item(), i)
             writer.add_scalar("train/psnr", psnr.item(), i)
+
+            if mask_exists:
+                writer.add_scalar("train/psnr_unmasked", psnr_unmasked.item(), i)
 
             # histogram of raw predictions from model
             # writer.add_histogram("train/trans", trans, i)
 
             if args.N_importance > 0:
                 writer.add_scalar("train/psnr_coarse", psnr0.item(), i)
+                if mask_exists:
+                    writer.add_scalar(
+                        "train/psnr_coarse_unmasked", psnr0_unmasked.item(), i
+                    )
 
             if i % args.i_img == 0:
                 # Log a rendered validation view to Tensorboard
@@ -1328,7 +1369,7 @@ def train():
                     #         extras["z_std"][None, :],
                     #     ]
                     # )
-                    writer.add_image("val/z_std", extras["z_std"][None,:], i)
+                    writer.add_image("val/z_std", extras["z_std"][None, :], i)
                     writer.add_scalar("val/psnr_coarse", psnr0_val.item(), i)
 
         global_step += 1

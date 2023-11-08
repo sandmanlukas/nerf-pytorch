@@ -6,7 +6,7 @@ import numpy as np
 
 
 # Misc
-img2mse = lambda x, y : torch.mean((x - y) ** 2)
+img2mse = lambda x, y, mask=None : torch.mean((x - y) ** 2) if mask is None else torch.mean(((x - y) ** 2)[mask])
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
 
