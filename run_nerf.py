@@ -148,7 +148,7 @@ def render(
         k_sh = list(sh[:-1]) + list(all_ret[k].shape[1:])
         all_ret[k] = torch.reshape(all_ret[k], k_sh)
 
-    k_extract = ["rgb_map", "disp_map", "acc_map"]
+    k_extract = ["rgb_map", "disp_map", "acc_map", "depth_map"]
     ret_list = [all_ret[k] for k in k_extract]
     ret_dict = {k: all_ret[k] for k in all_ret if k not in k_extract}
     return ret_list + [ret_dict]
@@ -180,6 +180,7 @@ def render_path(
 
     rgbs = []
     disps = []
+    depths = []
 
     psnrs_scores = []
     psnrs_unmasked_scores = []
@@ -190,7 +191,7 @@ def render_path(
     for i, c2w in enumerate(tqdm(render_poses)):
         print(i, time.time() - t)
         t = time.time()
-        rgb, disp, acc, _ = render(
+        rgb, disp, acc, depth, _ = render(
             H, W, K, chunk=chunk, c2w=c2w[:3, :4], **render_kwargs
         )
 
@@ -201,8 +202,10 @@ def render_path(
 
         rgbs.append(rgb.cpu().numpy())
         disps.append(disp.cpu().numpy())
+        depths.append(depth.cpu().numpy())
+
         if i == 0:
-            print(rgb.shape, disp.shape)
+            print(rgb.shape, disp.shape, depth.shape)
 
         if gt_imgs is not None and render_factor == 0:
             gt_img = (
@@ -241,8 +244,11 @@ def render_path(
 
         if savedir is not None:
             rgb8 = to8b(rgbs[-1])
-            filename = os.path.join(savedir, "{:03d}.png".format(i))
-            imageio.v3.imwrite(filename, rgb8)
+            depth8 = to8b(depths[-1])
+            filename_rgb = os.path.join(savedir, "{:03d}.png".format(i))
+            filename_depth = os.path.join(savedir, "{:03d}_depth.png".format(i))
+            imageio.v3.imwrite(filename_rgb, rgb8)
+            imageio.v3.imwrite(filename_depth, depth8)
 
     if psnrs_unmasked_scores:
         psnr_unmasked_score = round(float(np.mean(psnrs_unmasked_scores)), 2)
@@ -295,8 +301,9 @@ def render_path(
 
     rgbs = np.stack(rgbs, 0)
     disps = np.stack(disps, 0)
+    depths = np.stack(depths, 0)
 
-    return rgbs, disps
+    return rgbs, disps, depths
 
 
 def create_nerf(args):
@@ -543,7 +550,7 @@ def render_rays(
     )
 
     if N_importance > 0:
-        rgb_map_0, disp_map_0, acc_map_0 = rgb_map, disp_map, acc_map
+        rgb_map_0, disp_map_0, acc_map_0, depth_map_0 = rgb_map, disp_map, acc_map, depth_map
 
         z_vals_mid = 0.5 * (z_vals[..., 1:] + z_vals[..., :-1])
         z_samples = sample_pdf(
@@ -568,13 +575,14 @@ def render_rays(
             raw, z_vals, rays_d, raw_noise_std, white_bkgd, pytest=pytest
         )
 
-    ret = {"rgb_map": rgb_map, "disp_map": disp_map, "acc_map": acc_map}
+    ret = {"rgb_map": rgb_map, "disp_map": disp_map, "acc_map": acc_map, "depth_map": depth_map}
     if retraw:
         ret["raw"] = raw
     if N_importance > 0:
         ret["rgb0"] = rgb_map_0
         ret["disp0"] = disp_map_0
         ret["acc0"] = acc_map_0
+        ret["depth0"] = depth_map_0
         ret["z_std"] = torch.std(z_samples, dim=-1, unbiased=False)  # [N_rays]
 
     for k in ret:
@@ -1016,7 +1024,7 @@ def train():
             os.makedirs(testsavedir, exist_ok=True)
             print("test poses shape", render_poses.shape)
 
-            rgbs, _ = render_path(
+            rgbs, _, depths = render_path(
                 render_poses,
                 hwf,
                 K,
@@ -1030,6 +1038,9 @@ def train():
             print("Done rendering", testsavedir)
             imageio.v3.imwrite(
                 os.path.join(testsavedir, "video.mp4"), to8b(rgbs), fps=30, quality=8
+            )
+            imageio.v3.imwrite(
+                os.path.join(testsavedir, "video_depth.mp4"), to8b(depths), fps=30, quality=8
             )
 
             return
@@ -1171,7 +1182,7 @@ def train():
                 ]  # (N_rand, 3)
 
         #####  Core optimization loop  #####
-        rgb, disp, acc, extras = render(
+        rgb, disp, acc, depth, extras = render(
             H,
             W,
             K,
@@ -1246,10 +1257,10 @@ def train():
         if i % args.i_video == 0 and i > 0:
             # Turn on testing mode
             with torch.no_grad():
-                rgbs, disps = render_path(
+                rgbs, disps, depths = render_path(
                     render_poses, hwf, K, args.chunk, render_kwargs_test
                 )
-            print("Done, saving", rgbs.shape, disps.shape)
+            print("Done, saving", rgbs.shape, disps.shape, depths.shape)
             movie_name = (
                 "{}_spiral_{:06d}_".format(expname, i)
                 if args.render_spiral
@@ -1258,6 +1269,7 @@ def train():
 
             moviebase = os.path.join(basedir, expname, movie_name)
             imageio.v2.mimwrite(moviebase + "rgb.mp4", to8b(rgbs), fps=30, quality=8)
+            imageio.v2.mimwrite(moviebase + "depth.mp4", to8b(depths), fps=30, quality=8)
             imageio.v2.mimwrite(
                 moviebase + "disp.mp4", to8b(disps / np.max(disps)), fps=30, quality=8
             )
@@ -1315,10 +1327,12 @@ def train():
                 with torch.no_grad():
                     # disp, acc doesn't seem to be working correctly
                     # disregard them
-                    rgb, _, _, extras = render(
+                    rgb, _, _, depth, extras = render(
                         H, W, K, chunk=args.chunk, c2w=pose, **render_kwargs_test
                     )
 
+                # add depth to tensorboard
+                writer.add_images("val/depth", depth.permute(2,0,1),i)
                 if mask_exists:
                     rgb_masked = rgb * torch.tensor(mask[0])
                     psnr_val = mse2psnr(img2mse(rgb_masked, target))
