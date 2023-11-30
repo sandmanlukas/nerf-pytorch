@@ -202,6 +202,7 @@ def render_path(
 
         rgbs.append(rgb.cpu().numpy())
         disps.append(disp.cpu().numpy())
+        depth = visualize_depth(depth)
         depths.append(depth.cpu().numpy())
 
         if i == 0:
@@ -1332,7 +1333,8 @@ def train():
                     )
 
                 # add depth to tensorboard
-                writer.add_images("val/depth", depth.permute(2,0,1),i)
+                depth = visualize_depth(depth)
+                writer.add_images("val/depth", torch.stack([depth]),i)
                 if mask_exists:
                     rgb_masked = rgb * torch.tensor(mask[0])
                     psnr_val = mse2psnr(img2mse(rgb_masked, target))
