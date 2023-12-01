@@ -209,6 +209,7 @@ def render_path(
             print(rgb.shape, disp.shape, depth.shape)
 
         if gt_imgs is not None and render_factor == 0:
+            # TODO: test with masking gt_img again!
             gt_img = (
                 gt_imgs[i].cpu().numpy() if torch.is_tensor(gt_imgs[i]) else gt_imgs[i]
             )
