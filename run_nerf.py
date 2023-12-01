@@ -215,6 +215,7 @@ def render_path(
             rgb_img = rgb_masked if len(mask) else rgb.cpu().numpy()
 
             p = -10.0 * np.log10(np.mean(np.square(rgb_img - gt_img)))
+            
             if len(mask) != 0:
                 # remove mask from psnr calculation
                 valid_mask = np.repeat(mask[0] != 0, 3, axis=2)
@@ -245,7 +246,7 @@ def render_path(
 
         if savedir is not None:
             rgb8 = to8b(rgbs[-1])
-            depth8 = to8b(depths[-1])
+            depth8 = to8b(depths[-1].transpose(1, 2, 0))
             filename_rgb = os.path.join(savedir, "{:03d}.png".format(i))
             filename_depth = os.path.join(savedir, "{:03d}_depth.png".format(i))
             imageio.v3.imwrite(filename_rgb, rgb8)
@@ -1041,7 +1042,7 @@ def train():
                 os.path.join(testsavedir, "video.mp4"), to8b(rgbs), fps=30, quality=8
             )
             imageio.v3.imwrite(
-                os.path.join(testsavedir, "video_depth.mp4"), to8b(depths), fps=30, quality=8
+                os.path.join(testsavedir, "video_depth.mp4"), to8b(depths.transpose(0,2,3,1)), fps=30, quality=8
             )
 
             return
@@ -1257,9 +1258,10 @@ def train():
 
         if i % args.i_video == 0 and i > 0:
             # Turn on testing mode
+            mask = mask if mask_exists else []
             with torch.no_grad():
                 rgbs, disps, depths = render_path(
-                    render_poses, hwf, K, args.chunk, render_kwargs_test
+                    render_poses, hwf, K, args.chunk, render_kwargs_test, mask=mask
                 )
             print("Done, saving", rgbs.shape, disps.shape, depths.shape)
             movie_name = (
@@ -1270,7 +1272,7 @@ def train():
 
             moviebase = os.path.join(basedir, expname, movie_name)
             imageio.v2.mimwrite(moviebase + "rgb.mp4", to8b(rgbs), fps=30, quality=8)
-            imageio.v2.mimwrite(moviebase + "depth.mp4", to8b(depths), fps=30, quality=8)
+            imageio.v2.mimwrite(moviebase + "depth.mp4", to8b(depths.transpose(0,2,3,1)), fps=30, quality=8)
             imageio.v2.mimwrite(
                 moviebase + "disp.mp4", to8b(disps / np.max(disps)), fps=30, quality=8
             )
@@ -1279,6 +1281,8 @@ def train():
         if i_test and i % args.i_testset == 0 and i > 0:
             testsavedir = os.path.join(basedir, expname, "testset_{:06d}".format(i))
             os.makedirs(testsavedir, exist_ok=True)
+            mask = mask if mask_exists else []
+
             print("test poses shape", poses[i_test].shape)
             with torch.no_grad():
                 render_path(
@@ -1289,6 +1293,7 @@ def train():
                     render_kwargs_test,
                     gt_imgs=images[i_test],
                     savedir=testsavedir,
+                    mask=mask,
                 )
             print("Saved test set")
 
