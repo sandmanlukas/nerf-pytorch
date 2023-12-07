@@ -1100,9 +1100,8 @@ def train():
     # Summary writers
 
     # get last version number and increment
-
-    # TODO: Will this work if summaries dir does not exist?
     version_num = "0"
+    os.makedirs(os.path.join(basedir,expname, "summaries"), exist_ok=True)
     if os.path.isdir(os.path.join(basedir, expname, "summaries")):
         version_list = sorted(
             [
