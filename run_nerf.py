@@ -330,7 +330,11 @@ def create_nerf(args):
     ).to(device)
     grad_vars = list(model.parameters())
 
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    coarse_params = sum([np.prod(p.size()) for p in model_parameters])
+    print("Trainable parameters COARSE: ", coarse_params)
     model_fine = None
+    fine_params = 0
     if args.N_importance > 0:
         model_fine = NeRF(
             D=args.netdepth_fine,
@@ -343,6 +347,12 @@ def create_nerf(args):
         ).to(device)
         grad_vars += list(model_fine.parameters())
 
+        model_parameters = filter(lambda p: p.requires_grad, model_fine.parameters())
+        fine_params = sum([np.prod(p.size()) for p in model_parameters])
+        print("Trainable parameters FINE: ", fine_params)
+
+
+    print('Total trainable parameters: ', coarse_params + fine_params)
     network_query_fn = lambda inputs, viewdirs, network_fn: run_network(
         inputs,
         viewdirs,
